@@ -6,3 +6,4 @@ pandas
 numpy
 fpdf2
 pypdf
+plotly
