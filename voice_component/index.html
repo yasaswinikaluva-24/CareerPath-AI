@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      overflow: hidden;
+      font-family: 'Outfit', sans-serif;
+    }
+    .mic-container {
+      display: flex;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 8px 12px;
+      color: #F8FAFC;
+      box-sizing: border-box;
+      height: 52px;
+    }
+    .mic-btn {
+      background: linear-gradient(135deg, #7C3AED, #A855F7);
+      color: #F8FAFC;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 16px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 4px 15px rgba(139, 92, 246, 0.35);
+      transition: all 0.3s ease;
+      white-space: nowrap;
+      height: 36px;
+    }
+    .mic-btn:hover {
+      background: linear-gradient(135deg, #6D28D9, #9333EA);
+      transform: scale(1.02);
+    }
+    .mic-btn.recording {
+      background: linear-gradient(135deg, #ef4444, #b91c1c);
+      box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
+      animation: pulse 1.5s infinite;
+    }
+    .status-text {
+      font-size: 13px;
+      margin-left: 12px;
+      color: #34D399;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex-grow: 1;
+    }
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.6; }
+      100% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="mic-container" id="container">
+    <button id="mic-btn" class="mic-btn">🎙️ Start Dictating</button>
+    <span id="status" class="status-text">Click mic to record</span>
+  </div>
+
+  <script>
+    function sendToStreamlit(value) {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setComponentValue",
+        value: value
+      }, "*");
+    }
+
+    function setFrameHeight(height) {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setFrameHeight",
+        height: height
+      }, "*");
+    }
+
+    function initComponent() {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:componentReady",
+        apiVersion: 1
+      }, "*");
+    }
+
+    // Set frame height on load
+    window.addEventListener("load", function() {
+      setFrameHeight(55);
+      initComponent();
+    });
+
+    // Streamlit render handler
+    window.addEventListener("message", function(event) {
+      if (event.data.type === "streamlit:render") {
+        setFrameHeight(55);
+      }
+    });
+
+    const micBtn = document.getElementById('mic-btn');
+    const status = document.getElementById('status');
+
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        status.innerText = "Mic API not supported in browser.";
+        micBtn.disabled = true;
+    } else {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+
+        let isRecording = false;
+        let finalTranscript = "";
+        let silenceTimer = null;
+        const SILENCE_TIMEOUT = 3000; // Auto-submit if there is a 3-second pause
+
+        function resetSilenceTimer() {
+            if (silenceTimer) clearTimeout(silenceTimer);
+            silenceTimer = setTimeout(() => {
+                if (isRecording) {
+                    status.innerText = "Auto-submitting due to pause...";
+                    stopAndSubmit();
+                }
+            }, SILENCE_TIMEOUT);
+        }
+
+        function stopAndSubmit() {
+            recognition.stop();
+            isRecording = false;
+            micBtn.innerText = "🎙️ Start Dictating";
+            micBtn.classList.remove('recording');
+            if (silenceTimer) clearTimeout(silenceTimer);
+            
+            const transcriptToSend = finalTranscript.trim();
+            if (transcriptToSend) {
+                status.innerText = "Transcript sent successfully!";
+                sendToStreamlit(transcriptToSend);
+                
+                // Clear state value after 800ms
+                setTimeout(() => {
+                    sendToStreamlit(null);
+                    status.innerText = "Click mic to record";
+                }, 800);
+            } else {
+                status.innerText = "No speech detected.";
+            }
+        }
+
+        micBtn.onclick = function() {
+            if (!isRecording) {
+                try {
+                    finalTranscript = "";
+                    recognition.start();
+                    status.innerText = "Listening... speak clearly.";
+                    micBtn.innerText = "🛑 Stop Speaking";
+                    micBtn.classList.add('recording');
+                    isRecording = true;
+                    resetSilenceTimer();
+                } catch (e) {
+                    status.innerText = "Error starting recognition.";
+                }
+            } else {
+                stopAndSubmit();
+            }
+        };
+
+        recognition.onresult = function(event) {
+            let interimTranscript = "";
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    finalTranscript += transcript + " ";
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+            
+            const currentSpeech = (finalTranscript + interimTranscript).trim();
+            if (currentSpeech) {
+                status.innerText = "Hearing: \"" + currentSpeech + "\"";
+                resetSilenceTimer();
+            }
+        };
+
+        recognition.onerror = function(event) {
+            if (event.error !== 'no-speech') {
+                status.innerText = "Error: " + event.error;
+                if (isRecording) {
+                    stopAndSubmit();
+                }
+            } else {
+                status.innerText = "No speech detected.";
+            }
+        };
+
+        recognition.onend = function() {
+            if (isRecording) {
+                stopAndSubmit();
+            }
+        };
+    }
+  </script>
+</body>
+</html>
